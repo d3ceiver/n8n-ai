@@ -37,11 +37,11 @@ spec:
 
             # ✅ Set URL to match NodePort access (optional but recommended)
             - name: N8N_HOST
-              value: "192.168.1.42"   # ← Replace with your Pi's IP or DNS name
+              value: "192.168.0.59"   # ← Replace with your Pi's IP or DNS name
             - name: N8N_PORT
               value: "5678"
             - name: WEBHOOK_URL
-              value: "http://192.168.1.42:32000/"  # matches NodePort service
+              value: "http://192.168.0.59:32000/"  # matches NodePort service
 
           volumeMounts:
             - name: n8n-data
