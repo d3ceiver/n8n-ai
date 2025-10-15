@@ -1,0 +1,7 @@
+volumeMounts:
+  - name: data
+    mountPath: /home/node/.n8n
+volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: n8n-data
