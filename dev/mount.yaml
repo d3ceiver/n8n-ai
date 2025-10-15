@@ -1,6 +1,6 @@
 volumeMounts:
   - name: data
-    mountPath: /home/node/.n8n
+    mountPath: /home/manager/.n8n
 volumes:
   - name: data
     persistentVolumeClaim:
