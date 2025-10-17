@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: n8n
+  namespace: ai                # ✅ important!
   labels:
     app: n8n
 spec:
@@ -21,7 +22,6 @@ spec:
           ports:
             - containerPort: 5678
           env:
-            # ✅ Basic auth
             - name: N8N_BASIC_AUTH_ACTIVE
               value: "true"
             - name: N8N_BASIC_AUTH_USER
@@ -34,20 +34,19 @@ spec:
                 secretKeyRef:
                   name: n8n-secret
                   key: password
-
-            # ✅ Set URL to match NodePort access (optional but recommended)
             - name: N8N_HOST
-              value: "192.168.0.59"   # ← Replace with your Pi's IP or DNS name
+              value: "192.168.0.59"   # ✅ your Pi’s IP
             - name: N8N_PORT
               value: "5678"
             - name: WEBHOOK_URL
-              value: "http://192.168.0.59:32000/"  # matches NodePort service
+              value: "http://192.168.0.59:32000/"  # ✅ matches NodePort service
 
           volumeMounts:
             - name: n8n-data
-              mountPath: /home/manager/.n8n
+              mountPath: /home/node/.n8n   # ✅ correct path
       volumes:
         - name: n8n-data
           persistentVolumeClaim:
             claimName: n8n-data
+
 
