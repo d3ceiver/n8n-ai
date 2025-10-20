@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n-monitor
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: n8n-monitor
+  template:
+    metadata:
+      labels:
+        app: n8n-monitor
+    spec:
+      containers:
+        - name: n8n-monitor
+          image: alpine:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              apk add --no-cache bash curl;
+              mkdir -p /data/n8n-status;
+              cp /scripts/monitor.sh /usr/local/bin/monitor.sh;
+              chmod +x /usr/local/bin/monitor.sh;
+              /usr/local/bin/monitor.sh
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+            - name: n8n-state
+              mountPath: /data/n8n-status
+      volumes:
+        - name: script
+          configMap:
+            name: n8n-monitor-script
+        - name: n8n-state
+          persistentVolumeClaim:
+            claimName: n8n-monitor-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: n8n-monitor-pvc
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Mi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: n8n-monitor-script
+  namespace: monitoring
+data:
+  monitor.sh: |
+$(sed 's/^/    /' dev/n8n-monitor/monitor.sh)
