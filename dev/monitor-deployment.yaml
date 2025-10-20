@@ -73,13 +73,13 @@ spec:
         - name: n8n-monitor
           image: alpine:latest
           command: ["/bin/sh", "-c"]
-           args:
+          args:
             - |
-             apk add --no-cache bash curl;
-             mkdir -p /data/n8n-status;
-             cp /scripts/monitor.sh /usr/local/bin/monitor.sh;
-             chmod +x /usr/local/bin/monitor.sh;
-             exec /bin/bash /usr/local/bin/monitor.sh
+              apk add --no-cache bash curl;
+              mkdir -p /data/n8n-status;
+              cp /scripts/monitor.sh /usr/local/bin/monitor.sh;
+              chmod +x /usr/local/bin/monitor.sh;
+              exec /bin/bash /usr/local/bin/monitor.sh
           volumeMounts:
             - name: script
               mountPath: /scripts
@@ -93,4 +93,3 @@ spec:
           persistentVolumeClaim:
             claimName: n8n-monitor-pvc
 
-            claimName: n8n-monitor-pvc
