@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: monitoring
+  name: ai
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: n8n-monitor-script
-  namespace: monitoring
+  namespace: ai
 data:
   monitor.sh: |
     #!/bin/bash
@@ -18,14 +18,14 @@ data:
 
     mkdir -p "$(dirname "$STATE_FILE")"
 
-    # Boot event
+    # --- Boot event ---
     if [ ! -f "$STATE_FILE" ]; then
       echo "boot" > "$STATE_FILE"
       echo "$(date): Boot detected → sending webhook" >> /var/log/n8n-monitor.log
       curl -s -X POST "$WEBHOOK_BOOT" -o /dev/null
     fi
 
-    # Continuous monitor
+    # --- Continuous monitor ---
     while true; do
       if curl -s --head --request GET "$CHECK_URL" | grep "200 OK" > /dev/null; then
         if grep -q "down" "$STATE_FILE"; then
@@ -46,7 +46,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: n8n-monitor-pvc
-  namespace: monitoring
+  namespace: ai
 spec:
   accessModes:
     - ReadWriteOnce
@@ -58,7 +58,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: n8n-monitor
-  namespace: monitoring
+  namespace: ai
 spec:
   replicas: 1
   selector:
@@ -91,4 +91,6 @@ spec:
             name: n8n-monitor-script
         - name: n8n-state
           persistentVolumeClaim:
+            claimName: n8n-monitor-pvc
+
             claimName: n8n-monitor-pvc
