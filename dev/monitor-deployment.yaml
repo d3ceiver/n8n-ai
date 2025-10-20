@@ -71,15 +71,8 @@ spec:
     spec:
       containers:
         - name: n8n-monitor
-          image: alpine:latest
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              apk add --no-cache bash curl;
-              mkdir -p /data/n8n-status;
-              cp /scripts/monitor.sh /usr/local/bin/monitor.sh;
-              chmod +x /usr/local/bin/monitor.sh;
-              exec /bin/bash /usr/local/bin/monitor.sh
+          image: bash:5
+          command: ["/bin/bash", "/scripts/monitor.sh"]
           volumeMounts:
             - name: script
               mountPath: /scripts
