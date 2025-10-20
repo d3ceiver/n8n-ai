@@ -10,7 +10,9 @@ metadata:
   namespace: ai
 data:
   monitor.sh: |
-    #!/bin/bash
+    #!/bin/sh
+    echo "$(date): n8n-monitor starting..." >> /var/log/n8n-monitor.log
+
     WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
     WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
     CHECK_URL="http://192.168.0.59:32000/"
@@ -71,13 +73,14 @@ spec:
     spec:
       containers:
         - name: n8n-monitor
-          image: bash:5
-          command: ["/bin/bash", "/scripts/monitor.sh"]
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "/scripts/monitor.sh"]
           volumeMounts:
             - name: script
               mountPath: /scripts
             - name: n8n-state
               mountPath: /data/n8n-status
+      restartPolicy: Always
       volumes:
         - name: script
           configMap:
@@ -85,4 +88,3 @@ spec:
         - name: n8n-state
           persistentVolumeClaim:
             claimName: n8n-monitor-pvc
-
