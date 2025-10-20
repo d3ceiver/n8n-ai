@@ -1,3 +1,59 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: n8n-monitor-script
+  namespace: monitoring
+data:
+  monitor.sh: |
+    #!/bin/bash
+    WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
+    WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
+    CHECK_URL="http://192.168.0.59:32000/"
+    STATE_FILE="/data/n8n-status/state"
+
+    mkdir -p "$(dirname "$STATE_FILE")"
+
+    # Boot event
+    if [ ! -f "$STATE_FILE" ]; then
+      echo "boot" > "$STATE_FILE"
+      echo "$(date): Boot detected → sending webhook" >> /var/log/n8n-monitor.log
+      curl -s -X POST "$WEBHOOK_BOOT" -o /dev/null
+    fi
+
+    # Continuous monitor
+    while true; do
+      if curl -s --head --request GET "$CHECK_URL" | grep "200 OK" > /dev/null; then
+        if grep -q "down" "$STATE_FILE"; then
+          echo "up" > "$STATE_FILE"
+          echo "$(date): n8n recovered → sending webhook" >> /var/log/n8n-monitor.log
+          curl -s -X POST "$WEBHOOK_RECOVERED" -o /dev/null
+        fi
+      else
+        if grep -q "up" "$STATE_FILE"; then
+          echo "down" > "$STATE_FILE"
+          echo "$(date): n8n appears down" >> /var/log/n8n-monitor.log
+        fi
+      fi
+      sleep 30
+    done
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: n8n-monitor-pvc
+  namespace: monitoring
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Mi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -36,24 +92,3 @@ spec:
         - name: n8n-state
           persistentVolumeClaim:
             claimName: n8n-monitor-pvc
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: n8n-monitor-pvc
-  namespace: monitoring
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 20Mi
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: n8n-monitor-script
-  namespace: monitoring
-data:
-  monitor.sh: |
-$(sed 's/^/    /' dev/n8n-monitor/monitor.sh)
