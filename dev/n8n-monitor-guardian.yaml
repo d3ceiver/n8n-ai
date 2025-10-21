@@ -13,88 +13,38 @@ spec:
       labels:
         app: n8n-monitor-guardian
     spec:
-      hostNetwork: true  # 👈 Use host’s IP directly (no cluster routing)
-      dnsPolicy: ClusterFirstWithHostNet
-      serviceAccountName: default
+      serviceAccountName: default  # or your custom guardian SA
+      hostNetwork: true
       containers:
-        - name: n8n-monitor-guardian
+        - name: guardian
           image: alpine:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
-              apk add --no-cache curl busybox-extras > /dev/null
-
-              LOG_FILE="/tmp/guardian.log"
-              NAMESPACE="ai"
-              MONITOR_LABEL="app=n8n-monitor"
-              PORT=9999
-
-              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started (host network mode)." | tee -a $LOG_FILE
-
-              # Last heartbeat timestamp
-              LAST_HEARTBEAT=$(date +%s)
-
-              # Start background listener to receive heartbeats
-              (
-                while true; do
-                  REQUEST=$(nc -l -p $PORT -v -n)
-                  if [ $? -eq 0 ]; then
-                    LAST_HEARTBEAT=$(date +%s)
-                    echo -e "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ❤️ Heartbeat received." | tee -a $LOG_FILE
-                  fi
-                done
-              ) &
-
-              # Main guardian loop
+              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started (host network mode).";
               while true; do
-                NOW=$(date +%s)
-                DIFF=$((NOW - LAST_HEARTBEAT))
+                # Listen for incoming heartbeats
+                nc -l -p 9999 -w 60 >/dev/null && LAST_HEARTBEAT=$(date +%s);
 
-                if [ $DIFF -gt 60 ]; then
-                  POD=$(kubectl -n $NAMESPACE get pod -l $MONITOR_LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-                  if [ -n "$POD" ]; then
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ❌ No heartbeat for ${DIFF}s → restarting monitor pod ($POD)" | tee -a $LOG_FILE
-                    kubectl -n $NAMESPACE delete pod "$POD" --grace-period=0 --force
-                  else
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Monitor pod not found." | tee -a $LOG_FILE
-                  fi
-                  LAST_HEARTBEAT=$(date +%s)
-                fi
+                CURRENT_TIME=$(date +%s);
+                TIME_DIFF=$((CURRENT_TIME - LAST_HEARTBEAT));
 
-                sleep 10
-              done
+                # Get monitor pod name
+                MONITOR_POD=$(kubectl -n ai get pod -l app=n8n-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+                if [ -z "$MONITOR_POD" ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Monitor pod not found.";
+                elif [ $TIME_DIFF -gt 60 ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ❌ No heartbeat for ${TIME_DIFF}s, restarting monitor pod ($MONITOR_POD).";
+                  kubectl -n ai delete pod "$MONITOR_POD" --force --grace-period=0;
+                  LAST_HEARTBEAT=$(date +%s);
+                fi;
+                sleep 10;
+              done;
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
           ports:
             - containerPort: 9999
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 100m
-              memory: 128Mi
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: monitor-guardian-role
-  namespace: ai
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: monitor-guardian-binding
-  namespace: ai
-subjects:
-  - kind: ServiceAccount
-    name: default
-    namespace: ai
-roleRef:
-  kind: Role
-  name: monitor-guardian-role
-  apiGroup: rbac.authorization.k8s.io
+              hostPort: 9999
 
