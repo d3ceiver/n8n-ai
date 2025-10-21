@@ -55,24 +55,22 @@ spec:
               MONITOR_LABEL="app=n8n-monitor"
               NAMESPACE="ai"
               HEARTBEAT_FILE="/tmp/last_heartbeat"
-              WEBHOOKS=(
-                "http://192.168.0.59:32000/webhook/pi-boot"
-                "http://192.168.0.59:32000/webhook/n8n-recovered"
-              )
+              WEBHOOK1="http://192.168.0.59:32000/webhook/pi-boot"
+              WEBHOOK2="http://192.168.0.59:32000/webhook/n8n-recovered"
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Guardian started." | tee -a $LOG_FILE
 
-              # Start background heartbeat listener
+              # Background listener for heartbeat
               (
                 while true; do
                   nc -l -p 8080 > /dev/null 2>&1 && \
-                  date +%s > $HEARTBEAT_FILE && \
+                  date +%s > "$HEARTBEAT_FILE" && \
                   echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat received." | tee -a $LOG_FILE
                 done
               ) &
 
               while true; do
-                POD_NAME=$(kubectl get pods -n $NAMESPACE -l $MONITOR_LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                POD_NAME=$(kubectl get pods -n "$NAMESPACE" -l "$MONITOR_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
                 if [ -z "$POD_NAME" ]; then
                   echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 15s..." | tee -a $LOG_FILE
@@ -80,12 +78,12 @@ spec:
                   continue
                 fi
 
-                # Check webhook health
-                for WEBHOOK in "${WEBHOOKS[@]}"; do
+                # Check first webhook
+                for WEBHOOK in "$WEBHOOK1" "$WEBHOOK2"; do
                   STATUS=$(curl -o /dev/null -s -w "%{http_code}" -X POST "$WEBHOOK")
                   if [ "$STATUS" != "200" ]; then
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $WEBHOOK (HTTP $STATUS). Restarting monitor..." | tee -a $LOG_FILE
-                    kubectl delete pod "$POD_NAME" -n $NAMESPACE --force --grace-period=0
+                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $WEBHOOK (HTTP $STATUS). Restarting monitor pod $POD_NAME..." | tee -a $LOG_FILE
+                    kubectl delete pod "$POD_NAME" -n "$NAMESPACE" --force --grace-period=0
                     sleep 30
                     break
                   fi
@@ -93,12 +91,12 @@ spec:
 
                 # Check last heartbeat
                 if [ -f "$HEARTBEAT_FILE" ]; then
-                  LAST=$(cat $HEARTBEAT_FILE)
+                  LAST=$(cat "$HEARTBEAT_FILE")
                   NOW=$(date +%s)
                   AGE=$((NOW - LAST))
-                  if [ $AGE -gt 120 ]; then
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for $AGE seconds. Restarting monitor..." | tee -a $LOG_FILE
-                    kubectl delete pod "$POD_NAME" -n $NAMESPACE --force --grace-period=0
+                  if [ "$AGE" -gt 120 ]; then
+                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for $AGE seconds. Restarting monitor pod $POD_NAME..." | tee -a $LOG_FILE
+                    kubectl delete pod "$POD_NAME" -n "$NAMESPACE" --force --grace-period=0
                     sleep 30
                   fi
                 else
@@ -107,6 +105,14 @@ spec:
 
                 sleep 30
               done
-
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
 
 
