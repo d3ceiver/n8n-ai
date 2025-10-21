@@ -29,26 +29,33 @@ spec:
 
               echo "$(date): Waiting for n8n to become available..."
 
-              # Wait until n8n responds
+              # Wait for n8n to respond
               until wget -q --spider "$CHECK_URL"; do
                 echo "$(date): n8n still down, retrying in 10s..."
                 sleep 10
               done
 
-              echo "$(date): n8n is now UP → sending boot webhook..."
-              if wget -q --spider "$WEBHOOK_BOOT"; then
-                echo "$(date): Boot webhook sent successfully."
-              else
-                echo "$(date): Boot webhook failed."
-              fi
+              echo "$(date): n8n is now UP → trying boot webhook..."
+
+              # Keep retrying until webhook call succeeds
+              until wget -q --spider "$WEBHOOK_BOOT"; do
+                echo "$(date): Boot webhook not ready yet (retrying in 10s)..."
+                sleep 10
+              done
+
+              echo "$(date): Boot webhook sent successfully!"
               STATE="up"
 
-              # --- Monitoring loop ---
+              # --- Continuous monitor ---
               while true; do
                 if wget -q --spider "$CHECK_URL"; then
                   if [ "$STATE" = "down" ]; then
                     echo "$(date): n8n recovered → sending webhook"
-                    wget -q --spider "$WEBHOOK_RECOVERED" && echo "$(date): Recovery webhook sent."
+                    until wget -q --spider "$WEBHOOK_RECOVERED"; do
+                      echo "$(date): Recovery webhook not ready yet (retrying in 10s)..."
+                      sleep 10
+                    done
+                    echo "$(date): Recovery webhook sent successfully!"
                     STATE="up"
                   fi
                 else
@@ -66,3 +73,4 @@ spec:
             limits:
               cpu: 50m
               memory: 32Mi
+
