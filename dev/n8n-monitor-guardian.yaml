@@ -1,69 +1,69 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: n8n-monitor-guardian
+  name: n8n-guardian
   namespace: ai
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: n8n-monitor-guardian
+      app: n8n-guardian
   template:
     metadata:
       labels:
-        app: n8n-monitor-guardian
+        app: n8n-guardian
     spec:
-      serviceAccountName: default  # needs delete permission on pods in namespace
       containers:
-        - name: n8n-monitor-guardian
-          image: bitnami/kubectl:latest
+        - name: n8n-guardian
+          image: curlimages/curl:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
-              LOG_FILE="/tmp/n8n-guardian.log"
-              MONITOR_DEPLOY="n8n-monitor"
+              LOG_FILE="/tmp/guardian.log"
               NAMESPACE="ai"
-              WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
-              WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
+              MONITOR_LABEL="app=n8n-monitor"
+              LAST_HEARTBEAT="/tmp/last_heartbeat"
+              
+              echo "$(date -u): Guardian started." | tee -a $LOG_FILE
 
-              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Guardian started." | tee -a $LOG_FILE
+              # Run HTTP server in background to receive heartbeats
+              (while true; do
+                 nc -l -p 8080 -q 1 | while read line; do
+                   if echo "$line" | grep -q "POST /heartbeat"; then
+                     date +%s > "$LAST_HEARTBEAT"
+                     echo "$(date -u): Heartbeat received." | tee -a $LOG_FILE
+                   fi
+                 done
+               done) &
 
+              # Initialize timestamp
+              date +%s > "$LAST_HEARTBEAT"
+
+              # Monitor loop
               while true; do
-                # 1️⃣ Check if n8n-monitor pod exists
-                POD_NAME=$(kubectl -n $NAMESPACE get pod -l app=$MONITOR_DEPLOY -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-                if [ -z "$POD_NAME" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 15s..." | tee -a $LOG_FILE
-                  sleep 15
-                  continue
-                fi
+                now=$(date +%s)
+                last=$(cat "$LAST_HEARTBEAT")
+                delta=$((now - last))
 
-                # 2️⃣ Check pod status
-                POD_STATUS=$(kubectl -n $NAMESPACE get pod "$POD_NAME" -o jsonpath='{.status.phase}' 2>/dev/null)
-                if [ "$POD_STATUS" != "Running" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Pod $POD_NAME not running (status: $POD_STATUS)" | tee -a $LOG_FILE
-                  kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
-                  sleep 20
-                  continue
-                fi
-
-                # 3️⃣ Check webhook availability
-                for URL in "$WEBHOOK_BOOT" "$WEBHOOK_RECOVERED"; do
-                  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
-                  if [ "$STATUS" -ne 200 ]; then
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $URL (HTTP $STATUS). Restarting monitor..." | tee -a $LOG_FILE
-                    kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
-                    sleep 30
-                    continue 2
+                if [ $delta -gt 120 ]; then
+                  echo "$(date -u): No heartbeat for $delta seconds → restarting monitor..." | tee -a $LOG_FILE
+                  POD=$(kubectl -n $NAMESPACE get pods -l $MONITOR_LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                  if [ -n "$POD" ]; then
+                    kubectl -n $NAMESPACE delete pod "$POD" --grace-period=0 --force
+                  else
+                    echo "$(date -u): No monitor pod found to delete." | tee -a $LOG_FILE
                   fi
-                done
-
-                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Monitor and webhooks healthy." | tee -a $LOG_FILE
-                sleep 60
+                  date +%s > "$LAST_HEARTBEAT"
+                fi
+                sleep 30
               done
+          ports:
+            - containerPort: 8080
           resources:
             requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
               cpu: 50m
               memory: 64Mi
-            limits:
-              cpu: 100m
-              memory: 128Mi
+
