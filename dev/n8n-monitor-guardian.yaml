@@ -16,58 +16,60 @@ spec:
       serviceAccountName: default
       containers:
         - name: n8n-monitor-guardian
-          image: busybox:latest
+          image: bitnami/kubectl:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
               LOG_FILE="/tmp/n8n-guardian.log"
-              MONITOR_LABEL="app=n8n-monitor"
+              MONITOR_DEPLOY="n8n-monitor"
               NAMESPACE="ai"
+              HEARTBEAT_FILE="/tmp/last_heartbeat"
               TIMEOUT=60
+
+              SERVICE_ACCOUNT_PATH="/var/run/secrets/kubernetes.io/serviceaccount"
+              KUBE_API="https://kubernetes.default.svc"
+              TOKEN=$(cat $SERVICE_ACCOUNT_PATH/token)
+              CACERT="$SERVICE_ACCOUNT_PATH/ca.crt"
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started." | tee -a $LOG_FILE
 
-              # Find monitor pod
-              while true; do
-                POD_NAME=$(kubectl -n $NAMESPACE get pod -l $MONITOR_LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-                if [ -n "$POD_NAME" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Found monitor pod $POD_NAME" | tee -a $LOG_FILE
-                  break
+              # Create a simple background HTTP listener for heartbeat updates
+              (while true; do
+                nc -l -p 8080 -q 1 > /tmp/incoming &
+                PID=$!
+                sleep 1
+                if grep -q "heartbeat" /tmp/incoming 2>/dev/null; then
+                  date +%s > $HEARTBEAT_FILE
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat received." | tee -a $LOG_FILE
                 fi
-                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 10s..." | tee -a $LOG_FILE
-                sleep 10
-              done
+                kill $PID 2>/dev/null
+                rm -f /tmp/incoming
+              done) &
 
-              LAST_HEARTBEAT=$(date +%s)
-              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Listening for heartbeats on port 8080..." | tee -a $LOG_FILE
-
-              # Background listener for HTTP heartbeats
+              # Main loop
               while true; do
-                # Start listener in background (BusyBox nc lacks -q)
-                ( echo -e "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK" | nc -l -p 8080 -v > /dev/null 2>&1 ) &
-                LISTENER_PID=$!
+                POD_NAME=$(kubectl get pod -n $NAMESPACE -l app=$MONITOR_DEPLOY \
+                  --server=$KUBE_API --token=$TOKEN --certificate-authority=$CACERT \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
-                # Wait for heartbeat or timeout
-                for i in $(seq 1 $TIMEOUT); do
-                  if [ -f /tmp/heartbeat.received ]; then
-                    rm -f /tmp/heartbeat.received
-                    LAST_HEARTBEAT=$(date +%s)
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat received." | tee -a $LOG_FILE
-                    break
-                  fi
-                  sleep 1
-                done
+                if [ -z "$POD_NAME" ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 10s..." | tee -a $LOG_FILE
+                  sleep 10
+                  continue
+                fi
 
-                # Check time since last heartbeat
+                LAST_HEARTBEAT=$(cat $HEARTBEAT_FILE 2>/dev/null || echo 0)
                 NOW=$(date +%s)
-                DIFF=$((NOW - LAST_HEARTBEAT))
-                if [ $DIFF -ge $TIMEOUT ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat in $DIFFs → restarting monitor pod..." | tee -a $LOG_FILE
-                  kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
-                  LAST_HEARTBEAT=$(date +%s)
-                fi
+                AGE=$((NOW - LAST_HEARTBEAT))
 
-                kill $LISTENER_PID 2>/dev/null
+                if [ $AGE -gt $TIMEOUT ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for ${AGE}s, restarting monitor pod ($POD_NAME)." | tee -a $LOG_FILE
+                  kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
+                  sleep 30
+                else
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat OK (${AGE}s old)." | tee -a $LOG_FILE
+                  sleep 10
+                fi
               done
           ports:
             - containerPort: 8080
@@ -102,3 +104,4 @@ roleRef:
   kind: Role
   name: monitor-guardian-role
   apiGroup: rbac.authorization.k8s.io
+
