@@ -22,15 +22,28 @@ spec:
             - -c
             - |
               echo "$(date): n8n monitor pod started."
-
               WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
               WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
               CHECK_URL="http://192.168.0.59:32000/"
               STATE="init"
 
-              echo "$(date): Sending boot webhook..."
-              wget -q --spider "$WEBHOOK_BOOT" && echo "$(date): Boot webhook sent." || echo "$(date): Boot webhook failed."
+              echo "$(date): Waiting for n8n to become available..."
 
+              # Wait until n8n responds
+              until wget -q --spider "$CHECK_URL"; do
+                echo "$(date): n8n still down, retrying in 10s..."
+                sleep 10
+              done
+
+              echo "$(date): n8n is now UP → sending boot webhook..."
+              if wget -q --spider "$WEBHOOK_BOOT"; then
+                echo "$(date): Boot webhook sent successfully."
+              else
+                echo "$(date): Boot webhook failed."
+              fi
+              STATE="up"
+
+              # --- Monitoring loop ---
               while true; do
                 if wget -q --spider "$CHECK_URL"; then
                   if [ "$STATE" = "down" ]; then
@@ -38,7 +51,6 @@ spec:
                     wget -q --spider "$WEBHOOK_RECOVERED" && echo "$(date): Recovery webhook sent."
                     STATE="up"
                   fi
-                  [ "$STATE" = "init" ] && STATE="up"
                 else
                   if [ "$STATE" != "down" ]; then
                     echo "$(date): n8n appears down."
