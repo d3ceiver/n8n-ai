@@ -16,43 +16,31 @@ spec:
       serviceAccountName: default
       containers:
         - name: n8n-monitor-guardian
-          image: bitnami/kubectl:latest
+          image: alpine/k8s:1.28.3
           command: ["/bin/sh", "-c"]
           args:
             - |
-              apt update -qq && apt install -y -qq netcat-openbsd || microdnf install -y nmap-ncat || true
-
               LOG_FILE="/tmp/n8n-guardian.log"
               MONITOR_DEPLOY="n8n-monitor"
               NAMESPACE="ai"
-              HEARTBEAT_FILE="/tmp/last_heartbeat"
-              TIMEOUT=60
-
-              SERVICE_ACCOUNT_PATH="/var/run/secrets/kubernetes.io/serviceaccount"
-              KUBE_API="https://kubernetes.default.svc"
-              TOKEN=$(cat $SERVICE_ACCOUNT_PATH/token)
-              CACERT="$SERVICE_ACCOUNT_PATH/ca.crt"
+              HEARTBEAT_PORT=9999
+              LAST_HEARTBEAT=$(date +%s)
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started." | tee -a $LOG_FILE
 
-              # Start HTTP listener for heartbeat
-              (while true; do
-                nc -l -p 8080 > /tmp/incoming &
-                PID=$!
-                sleep 1
-                if grep -q "heartbeat" /tmp/incoming 2>/dev/null; then
-                  date +%s > $HEARTBEAT_FILE
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat received." | tee -a $LOG_FILE
-                fi
-                kill $PID 2>/dev/null
-                rm -f /tmp/incoming
-              done) &
+              # Background listener for heartbeat
+              (
+                while true; do
+                  echo "Listening for heartbeat on port $HEARTBEAT_PORT..." | tee -a $LOG_FILE
+                  nc -lk -p $HEARTBEAT_PORT >/dev/null 2>&1 && LAST_HEARTBEAT=$(date +%s)
+                done
+              ) &
 
-              # Main loop
               while true; do
-                POD_NAME=$(kubectl get pod -n $NAMESPACE -l app=$MONITOR_DEPLOY \
-                  --server=$KUBE_API --token=$TOKEN --certificate-authority=$CACERT \
-                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                NOW=$(date +%s)
+                DIFF=$((NOW - LAST_HEARTBEAT))
+
+                POD_NAME=$(kubectl -n $NAMESPACE get pod -l app=$MONITOR_DEPLOY -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
                 if [ -z "$POD_NAME" ]; then
                   echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 10s..." | tee -a $LOG_FILE
@@ -60,21 +48,16 @@ spec:
                   continue
                 fi
 
-                LAST_HEARTBEAT=$(cat $HEARTBEAT_FILE 2>/dev/null || echo 0)
-                NOW=$(date +%s)
-                AGE=$((NOW - LAST_HEARTBEAT))
-
-                if [ $AGE -gt $TIMEOUT ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for ${AGE}s, restarting monitor pod ($POD_NAME)." | tee -a $LOG_FILE
+                if [ "$DIFF" -gt 60 ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for ${DIFF}s, restarting monitor pod ($POD_NAME)." | tee -a $LOG_FILE
                   kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
-                  sleep 30
-                else
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat OK (${AGE}s old)." | tee -a $LOG_FILE
-                  sleep 10
+                  LAST_HEARTBEAT=$(date +%s)
                 fi
+
+                sleep 5
               done
           ports:
-            - containerPort: 8080
+            - containerPort: 9999
           resources:
             requests:
               cpu: 50m
