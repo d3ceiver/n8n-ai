@@ -15,35 +15,44 @@ spec:
     spec:
       containers:
         - name: n8n-monitor
-          image: busybox:latest
+          image: busybox:1.36
           command:
             - /bin/sh
             - -c
             - |
-              echo "$(date): Starting n8n-monitor..."
-              
+              echo "$(date): n8n monitor pod started."
+
               WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
               WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
               CHECK_URL="http://192.168.0.59:32000/"
-              STATE=""
+              STATE="init"
 
               echo "$(date): Sending boot webhook..."
-              wget -qO- --post-data='' "$WEBHOOK_BOOT" >/dev/null 2>&1
+              wget -q --spider "$WEBHOOK_BOOT" && echo "$(date): Boot webhook sent." || echo "$(date): Boot webhook failed."
 
               while true; do
                 if wget -q --spider "$CHECK_URL"; then
                   if [ "$STATE" = "down" ]; then
                     echo "$(date): n8n recovered → sending webhook"
-                    wget -qO- --post-data='' "$WEBHOOK_RECOVERED" >/dev/null 2>&1
+                    wget -q --spider "$WEBHOOK_RECOVERED" && echo "$(date): Recovery webhook sent."
                     STATE="up"
                   fi
-                  [ -z "$STATE" ] && STATE="up"
+                  [ "$STATE" = "init" ] && STATE="up"
                 else
-                  if [ "$STATE" = "up" ] || [ -z "$STATE" ]; then
-                    echo "$(date): n8n appears down"
+                  if [ "$STATE" != "down" ]; then
+                    echo "$(date): n8n appears down."
                     STATE="down"
                   fi
                 fi
                 sleep 30
               done
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      restartPolicy: Always
+
           restartPolicy: Always
