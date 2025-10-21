@@ -23,23 +23,28 @@ spec:
               NAMESPACE="ai"
               MONITOR_LABEL="app=n8n-monitor"
               LAST_HEARTBEAT="/tmp/last_heartbeat"
-              
+
               echo "$(date -u): Guardian started." | tee -a $LOG_FILE
 
-              # Run HTTP server in background to receive heartbeats
-              (while true; do
-                 nc -l -p 8080 -q 1 | while read line; do
-                   if echo "$line" | grep -q "POST /heartbeat"; then
-                     date +%s > "$LAST_HEARTBEAT"
-                     echo "$(date -u): Heartbeat received." | tee -a $LOG_FILE
-                   fi
-                 done
-               done) &
+              # Start a simple HTTP server to accept POST /heartbeat
+              (
+                while true; do
+                  # Listen forever (-lk)
+                  nc -lk -p 8080 | while read line; do
+                    if echo "$line" | grep -q "POST /heartbeat"; then
+                      date +%s > "$LAST_HEARTBEAT"
+                      echo "$(date -u): Heartbeat received." | tee -a $LOG_FILE
+                      # Send a simple 200 OK response
+                      printf "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK" | nc -N 127.0.0.1 8080 >/dev/null 2>&1 || true
+                    fi
+                  done
+                done
+              ) &
 
               # Initialize timestamp
               date +%s > "$LAST_HEARTBEAT"
 
-              # Monitor loop
+              # Monitoring loop
               while true; do
                 now=$(date +%s)
                 last=$(cat "$LAST_HEARTBEAT")
@@ -55,6 +60,7 @@ spec:
                   fi
                   date +%s > "$LAST_HEARTBEAT"
                 fi
+
                 sleep 30
               done
           ports:
@@ -66,4 +72,5 @@ spec:
             limits:
               cpu: 50m
               memory: 64Mi
+
 
