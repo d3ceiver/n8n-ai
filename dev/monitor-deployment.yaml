@@ -21,8 +21,8 @@ spec:
             - -c
             - |
               #!/bin/sh
-              WEBHOOK_BOOT="http://192.168.0.59:32000/webhook-test/pi-boot"
-              WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook-test/n8n-recovered"
+              WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
+              WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
               CHECK_URL="http://192.168.0.59:32000/"
               LOG_FILE="/tmp/n8n-monitor.log"
               STATE="down"
@@ -30,7 +30,7 @@ spec:
               echo "$(date): n8n monitor pod started." >> "$LOG_FILE"
               echo "$(date): Waiting for n8n to become available..." >> "$LOG_FILE"
 
-              # --- Wait for n8n to be online ---
+              # --- Wait for n8n to become available ---
               until wget -q --spider "$CHECK_URL"; do
                 echo "$(date): n8n not reachable yet, retrying in 5s..." >> "$LOG_FILE"
                 sleep 5
@@ -38,7 +38,7 @@ spec:
 
               echo "$(date): n8n is now UP → attempting boot webhook..." >> "$LOG_FILE"
 
-              # --- Keep retrying boot webhook until it succeeds ---
+              # --- Retry sending boot webhook until it succeeds ---
               while true; do
                 if wget -q --post-data="" "$WEBHOOK_BOOT"; then
                   echo "$(date): Boot webhook sent successfully!" >> "$LOG_FILE"
@@ -50,7 +50,7 @@ spec:
                 fi
               done
 
-              # --- Continuous monitoring loop ---
+              # --- Continuous monitor loop ---
               while true; do
                 if wget -q --spider "$CHECK_URL"; then
                   if [ "$STATE" = "down" ]; then
@@ -77,4 +77,3 @@ spec:
             limits:
               cpu: "50m"
               memory: "32Mi"
-
