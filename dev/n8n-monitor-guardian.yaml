@@ -20,6 +20,8 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              apt update -qq && apt install -y -qq netcat-openbsd || microdnf install -y nmap-ncat || true
+
               LOG_FILE="/tmp/n8n-guardian.log"
               MONITOR_DEPLOY="n8n-monitor"
               NAMESPACE="ai"
@@ -33,9 +35,9 @@ spec:
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started." | tee -a $LOG_FILE
 
-              # Create a simple background HTTP listener for heartbeat updates
+              # Start HTTP listener for heartbeat
               (while true; do
-                nc -l -p 8080 -q 1 > /tmp/incoming &
+                nc -l -p 8080 > /tmp/incoming &
                 PID=$!
                 sleep 1
                 if grep -q "heartbeat" /tmp/incoming 2>/dev/null; then
@@ -104,4 +106,5 @@ roleRef:
   kind: Role
   name: monitor-guardian-role
   apiGroup: rbac.authorization.k8s.io
+
 
