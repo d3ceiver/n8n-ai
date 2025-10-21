@@ -18,50 +18,49 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: n8n-monitor-guardian
-          image: bitnami/kubectl:latest
+          image: alpine/k8s:1.28.3
           command: ["/bin/sh", "-c"]
           args:
             - |
               LOG_FILE="/tmp/n8n-guardian.log"
               MONITOR_DEPLOY="n8n-monitor"
               NAMESPACE="ai"
-              PORT=9999
-              TIMEOUT=60
+              HEARTBEAT_PORT=9999
+              LAST_HEARTBEAT=$(date +%s)
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started (host network mode)." | tee -a $LOG_FILE
 
-              LAST_HEARTBEAT=$(date +%s)
+              # Background listener for heartbeats
+              (
+                while true; do
+                  echo "Listening for heartbeat on port $HEARTBEAT_PORT..." | tee -a $LOG_FILE
+                  nc -lk -p $HEARTBEAT_PORT >/dev/null 2>&1 && LAST_HEARTBEAT=$(date +%s)
+                done
+              ) &
 
-              # Background listener for heartbeat
+              # Guardian loop
               while true; do
-                if nc -l -p $PORT -w $TIMEOUT >/dev/null 2>&1; then
-                  LAST_HEARTBEAT=$(date +%s)
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): 💓 Heartbeat received." | tee -a $LOG_FILE
-                else
-                  echo "nc: timeout" | tee -a $LOG_FILE
-                fi
-
                 NOW=$(date +%s)
-                ELAPSED=$((NOW - LAST_HEARTBEAT))
+                DIFF=$((NOW - LAST_HEARTBEAT))
 
-                POD_NAME=$(kubectl -n $NAMESPACE get pods -l app=$MONITOR_DEPLOY -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                POD_NAME=$(kubectl -n $NAMESPACE get pod -l app=$MONITOR_DEPLOY -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
                 if [ -z "$POD_NAME" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Monitor pod not found." | tee -a $LOG_FILE
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ No monitor pod found, waiting 10s..." | tee -a $LOG_FILE
+                  sleep 10
                   continue
                 fi
 
-                if [ $ELAPSED -ge $TIMEOUT ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ No heartbeat for ${ELAPSED}s — restarting monitor pod ($POD_NAME)." | tee -a $LOG_FILE
+                if [ "$DIFF" -gt 60 ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⏱️ No heartbeat for ${DIFF}s, restarting monitor pod ($POD_NAME)." | tee -a $LOG_FILE
                   kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
                   LAST_HEARTBEAT=$(date +%s)
                 fi
 
-                sleep 10
+                sleep 5
               done
           ports:
             - containerPort: 9999
-              protocol: TCP
           resources:
             requests:
               cpu: 50m
@@ -69,6 +68,7 @@ spec:
             limits:
               cpu: 100m
               memory: 128Mi
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -93,3 +93,4 @@ roleRef:
   kind: Role
   name: monitor-guardian-role
   apiGroup: rbac.authorization.k8s.io
+
