@@ -16,64 +16,59 @@ spec:
       containers:
         - name: n8n-monitor
           image: curlimages/curl:latest
-          command:
-            - /bin/sh
-            - -c
+          command: ["/bin/sh", "-c"]
+          args:
             - |
-              #!/bin/sh
+              LOG_FILE="/tmp/n8n-monitor.log"
               WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
               WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
               CHECK_URL="http://192.168.0.59:32000/"
-              LOG_FILE="/tmp/n8n-monitor.log"
-              STATE="down"
 
-              echo "$(date): n8n monitor pod started." | tee -a "$LOG_FILE"
-              echo "$(date): Waiting for n8n to become available..." | tee -a "$LOG_FILE"
+              echo "$(date): n8n monitor pod started." | tee -a $LOG_FILE
 
-              # Wait for n8n to become reachable
-              until curl -fs -o /dev/null "$CHECK_URL"; do
-                echo "$(date): n8n not reachable yet, retrying in 5s..." | tee -a "$LOG_FILE"
-                sleep 5
+              # Wait until n8n is reachable
+              until curl -fs "$CHECK_URL" > /dev/null 2>&1; do
+                echo "$(date): Waiting for n8n to become available..." | tee -a $LOG_FILE
+                sleep 10
               done
 
-              echo "$(date): n8n is now UP → attempting boot webhook..." | tee -a "$LOG_FILE"
+              echo "$(date): n8n is now UP → sending boot webhook..." | tee -a $LOG_FILE
 
-              # Retry boot webhook until it succeeds
+              # Keep retrying boot webhook until success
               while true; do
-                if curl -fs -X POST "$WEBHOOK_BOOT" -o /dev/null; then
-                  echo "$(date): Boot webhook sent successfully!" | tee -a "$LOG_FILE"
-                  STATE="up"
+                if curl -fs -X POST "$WEBHOOK_BOOT" > /dev/null 2>&1; then
+                  echo "$(date): Boot webhook sent successfully!" | tee -a $LOG_FILE
                   break
                 else
-                  echo "$(date): Boot webhook not ready yet (retrying in 10s)..." | tee -a "$LOG_FILE"
+                  echo "$(date): Boot webhook not ready yet (retrying in 10s)..." | tee -a $LOG_FILE
                   sleep 10
                 fi
               done
 
-              # Continuous monitoring loop
+              STATE="up"
+
+              # Continuous monitor loop
               while true; do
-                if curl -fs -o /dev/null "$CHECK_URL"; then
+                if curl -fs "$CHECK_URL" > /dev/null 2>&1; then
                   if [ "$STATE" = "down" ]; then
-                    echo "$(date): n8n recovered → sending recovery webhook" | tee -a "$LOG_FILE"
-                    if curl -fs -X POST "$WEBHOOK_RECOVERED" -o /dev/null; then
-                      echo "$(date): Recovery webhook sent successfully!" | tee -a "$LOG_FILE"
-                    else
-                      echo "$(date): Recovery webhook failed!" | tee -a "$LOG_FILE"
+                    echo "$(date): n8n recovered → sending webhook" | tee -a $LOG_FILE
+                    if curl -fs -X POST "$WEBHOOK_RECOVERED" > /dev/null 2>&1; then
+                      echo "$(date): Recovery webhook sent successfully!" | tee -a $LOG_FILE
+                      STATE="up"
                     fi
-                    STATE="up"
                   fi
                 else
                   if [ "$STATE" = "up" ]; then
-                    echo "$(date): n8n appears down." | tee -a "$LOG_FILE"
+                    echo "$(date): n8n appears down" | tee -a $LOG_FILE
                     STATE="down"
                   fi
                 fi
-                sleep 15
+                sleep 30
               done
           resources:
             requests:
-              cpu: "10m"
-              memory: "16Mi"
+              cpu: 50m
+              memory: 32Mi
             limits:
-              cpu: "50m"
-              memory: "32Mi"
+              cpu: 100m
+              memory: 64Mi
