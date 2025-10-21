@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: n8n-monitor
-          image: busybox:latest
+          image: curlimages/curl:latest
           command:
             - /bin/sh
             - -c
@@ -30,17 +30,15 @@ spec:
               echo "$(date): n8n monitor pod started." >> "$LOG_FILE"
               echo "$(date): Waiting for n8n to become available..." >> "$LOG_FILE"
 
-              # --- Wait for n8n to become available ---
-              until wget -q --spider "$CHECK_URL"; do
+              until curl -fs -o /dev/null "$CHECK_URL"; do
                 echo "$(date): n8n not reachable yet, retrying in 5s..." >> "$LOG_FILE"
                 sleep 5
               done
 
               echo "$(date): n8n is now UP → attempting boot webhook..." >> "$LOG_FILE"
 
-              # --- Retry sending boot webhook until it succeeds ---
               while true; do
-                if wget -q --post-data="" "$WEBHOOK_BOOT"; then
+                if curl -fs -X POST "$WEBHOOK_BOOT" -o /dev/null; then
                   echo "$(date): Boot webhook sent successfully!" >> "$LOG_FILE"
                   STATE="up"
                   break
@@ -50,12 +48,11 @@ spec:
                 fi
               done
 
-              # --- Continuous monitor loop ---
               while true; do
-                if wget -q --spider "$CHECK_URL"; then
+                if curl -fs -o /dev/null "$CHECK_URL"; then
                   if [ "$STATE" = "down" ]; then
                     echo "$(date): n8n recovered → sending recovery webhook" >> "$LOG_FILE"
-                    if wget -q --post-data="" "$WEBHOOK_RECOVERED"; then
+                    if curl -fs -X POST "$WEBHOOK_RECOVERED" -o /dev/null; then
                       echo "$(date): Recovery webhook sent successfully!" >> "$LOG_FILE"
                     else
                       echo "$(date): Recovery webhook failed!" >> "$LOG_FILE"
@@ -77,3 +74,4 @@ spec:
             limits:
               cpu: "50m"
               memory: "32Mi"
+
