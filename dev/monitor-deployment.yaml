@@ -1,49 +1,3 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ai
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: n8n-monitor-script
-  namespace: ai
-data:
-  monitor.sh: |
-    #!/bin/sh
-    LOG_FILE="/tmp/n8n-monitor.log"
-    WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
-    WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
-    CHECK_URL="http://192.168.0.59:32000/"
-    STATE_FILE="/tmp/n8n-status"
-
-    echo "$(date): n8n-monitor starting..." >> "$LOG_FILE"
-
-    # --- Boot event ---
-    if [ ! -f "$STATE_FILE" ]; then
-      echo "boot" > "$STATE_FILE"
-      echo "$(date): Boot detected → sending webhook" >> "$LOG_FILE"
-      curl -s -X POST "$WEBHOOK_BOOT" -o /dev/null
-    fi
-
-    # --- Continuous monitor ---
-    LAST_STATE="up"
-    while true; do
-      if curl -s --head --request GET "$CHECK_URL" | grep "200 OK" > /dev/null; then
-        if [ "$LAST_STATE" = "down" ]; then
-          echo "$(date): n8n recovered → sending webhook" >> "$LOG_FILE"
-          curl -s -X POST "$WEBHOOK_RECOVERED" -o /dev/null
-          LAST_STATE="up"
-        fi
-      else
-        if [ "$LAST_STATE" = "up" ]; then
-          echo "$(date): n8n appears down" >> "$LOG_FILE"
-          LAST_STATE="down"
-        fi
-      fi
-      sleep 30
-    done
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -61,13 +15,35 @@ spec:
     spec:
       containers:
         - name: n8n-monitor
-          image: curlimages/curl:latest
-          command: ["/bin/sh", "/scripts/monitor.sh"]
-          volumeMounts:
-            - name: script
-              mountPath: /scripts
-      restartPolicy: Always
-      volumes:
-        - name: script
-          configMap:
-            name: n8n-monitor-script
+          image: busybox:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "$(date): Starting n8n-monitor..."
+              
+              WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
+              WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
+              CHECK_URL="http://192.168.0.59:32000/"
+              STATE=""
+
+              echo "$(date): Sending boot webhook..."
+              wget -qO- --post-data='' "$WEBHOOK_BOOT" >/dev/null 2>&1
+
+              while true; do
+                if wget -q --spider "$CHECK_URL"; then
+                  if [ "$STATE" = "down" ]; then
+                    echo "$(date): n8n recovered → sending webhook"
+                    wget -qO- --post-data='' "$WEBHOOK_RECOVERED" >/dev/null 2>&1
+                    STATE="up"
+                  fi
+                  [ -z "$STATE" ] && STATE="up"
+                else
+                  if [ "$STATE" = "up" ] || [ -z "$STATE" ]; then
+                    echo "$(date): n8n appears down"
+                    STATE="down"
+                  fi
+                fi
+                sleep 30
+              done
+          restartPolicy: Always
