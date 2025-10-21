@@ -27,41 +27,44 @@ spec:
               LOG_FILE="/tmp/n8n-monitor.log"
               STATE="down"
 
-              echo "$(date): n8n monitor pod started." >> "$LOG_FILE"
-              echo "$(date): Waiting for n8n to become available..." >> "$LOG_FILE"
+              echo "$(date): n8n monitor pod started." | tee -a "$LOG_FILE"
+              echo "$(date): Waiting for n8n to become available..." | tee -a "$LOG_FILE"
 
+              # Wait for n8n to become reachable
               until curl -fs -o /dev/null "$CHECK_URL"; do
-                echo "$(date): n8n not reachable yet, retrying in 5s..." >> "$LOG_FILE"
+                echo "$(date): n8n not reachable yet, retrying in 5s..." | tee -a "$LOG_FILE"
                 sleep 5
               done
 
-              echo "$(date): n8n is now UP → attempting boot webhook..." >> "$LOG_FILE"
+              echo "$(date): n8n is now UP → attempting boot webhook..." | tee -a "$LOG_FILE"
 
+              # Retry boot webhook until it succeeds
               while true; do
                 if curl -fs -X POST "$WEBHOOK_BOOT" -o /dev/null; then
-                  echo "$(date): Boot webhook sent successfully!" >> "$LOG_FILE"
+                  echo "$(date): Boot webhook sent successfully!" | tee -a "$LOG_FILE"
                   STATE="up"
                   break
                 else
-                  echo "$(date): Boot webhook not ready yet (retrying in 10s)..." >> "$LOG_FILE"
+                  echo "$(date): Boot webhook not ready yet (retrying in 10s)..." | tee -a "$LOG_FILE"
                   sleep 10
                 fi
               done
 
+              # Continuous monitoring loop
               while true; do
                 if curl -fs -o /dev/null "$CHECK_URL"; then
                   if [ "$STATE" = "down" ]; then
-                    echo "$(date): n8n recovered → sending recovery webhook" >> "$LOG_FILE"
+                    echo "$(date): n8n recovered → sending recovery webhook" | tee -a "$LOG_FILE"
                     if curl -fs -X POST "$WEBHOOK_RECOVERED" -o /dev/null; then
-                      echo "$(date): Recovery webhook sent successfully!" >> "$LOG_FILE"
+                      echo "$(date): Recovery webhook sent successfully!" | tee -a "$LOG_FILE"
                     else
-                      echo "$(date): Recovery webhook failed!" >> "$LOG_FILE"
+                      echo "$(date): Recovery webhook failed!" | tee -a "$LOG_FILE"
                     fi
                     STATE="up"
                   fi
                 else
                   if [ "$STATE" = "up" ]; then
-                    echo "$(date): n8n appears down." >> "$LOG_FILE"
+                    echo "$(date): n8n appears down." | tee -a "$LOG_FILE"
                     STATE="down"
                   fi
                 fi
@@ -74,4 +77,3 @@ spec:
             limits:
               cpu: "50m"
               memory: "32Mi"
-
