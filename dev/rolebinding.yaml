@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: n8n-guardian-binding
+  namespace: ai
+subjects:
+  - kind: ServiceAccount
+    name: default   # or your specific one if you created a custom SA
+    namespace: ai
+roleRef:
+  kind: Role
+  name: n8n-guardian-role
+  apiGroup: rbac.authorization.k8s.io
