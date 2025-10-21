@@ -16,60 +16,61 @@ spec:
       serviceAccountName: default
       containers:
         - name: n8n-monitor-guardian
-          image: bitnami/kubectl:latest
+          image: busybox:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
               LOG_FILE="/tmp/n8n-guardian.log"
               MONITOR_LABEL="app=n8n-monitor"
               NAMESPACE="ai"
-              WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
-              WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
-              MONITOR_HEARTBEAT="http://192.168.0.59:32000/webhook/monitor-heartbeat"
+              TIMEOUT=60
 
-              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Guardian started." | tee -a $LOG_FILE
+              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started." | tee -a $LOG_FILE
 
+              # Find monitor pod
               while true; do
-                # 1️⃣ Check if monitor pod exists
                 POD_NAME=$(kubectl -n $NAMESPACE get pod -l $MONITOR_LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-                if [ -z "$POD_NAME" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 15s..." | tee -a $LOG_FILE
-                  sleep 15
-                  continue
+                if [ -n "$POD_NAME" ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Found monitor pod $POD_NAME" | tee -a $LOG_FILE
+                  break
                 fi
+                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 10s..." | tee -a $LOG_FILE
+                sleep 10
+              done
 
-                # 2️⃣ Check pod status
-                POD_STATUS=$(kubectl -n $NAMESPACE get pod "$POD_NAME" -o jsonpath='{.status.phase}' 2>/dev/null)
-                if [ "$POD_STATUS" != "Running" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Pod $POD_NAME not running (status: $POD_STATUS)" | tee -a $LOG_FILE
-                  kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
-                  sleep 20
-                  continue
-                fi
+              LAST_HEARTBEAT=$(date +%s)
+              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Listening for heartbeats on port 8080..." | tee -a $LOG_FILE
 
-                # 3️⃣ Check webhooks
-                for URL in "$WEBHOOK_BOOT" "$WEBHOOK_RECOVERED"; do
-                  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
-                  if [ "$STATUS" -ne 200 ]; then
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $URL (HTTP $STATUS). Restarting monitor..." | tee -a $LOG_FILE
-                    kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
-                    sleep 30
-                    continue 2
+              # Background listener for HTTP heartbeats
+              while true; do
+                # Start listener in background (BusyBox nc lacks -q)
+                ( echo -e "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK" | nc -l -p 8080 -v > /dev/null 2>&1 ) &
+                LISTENER_PID=$!
+
+                # Wait for heartbeat or timeout
+                for i in $(seq 1 $TIMEOUT); do
+                  if [ -f /tmp/heartbeat.received ]; then
+                    rm -f /tmp/heartbeat.received
+                    LAST_HEARTBEAT=$(date +%s)
+                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat received." | tee -a $LOG_FILE
+                    break
                   fi
+                  sleep 1
                 done
 
-                # 4️⃣ Heartbeat check
-                HEART_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$MONITOR_HEARTBEAT")
-                if [ "$HEART_STATUS" -ne 200 ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat failed for $MONITOR_HEARTBEAT (HTTP $HEART_STATUS). Restarting monitor..." | tee -a $LOG_FILE
+                # Check time since last heartbeat
+                NOW=$(date +%s)
+                DIFF=$((NOW - LAST_HEARTBEAT))
+                if [ $DIFF -ge $TIMEOUT ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat in $DIFFs → restarting monitor pod..." | tee -a $LOG_FILE
                   kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
-                  sleep 30
-                  continue
+                  LAST_HEARTBEAT=$(date +%s)
                 fi
 
-                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Monitor and webhooks healthy." | tee -a $LOG_FILE
-                sleep 60
+                kill $LISTENER_PID 2>/dev/null
               done
+          ports:
+            - containerPort: 8080
           resources:
             requests:
               cpu: 50m
@@ -101,4 +102,3 @@ roleRef:
   kind: Role
   name: monitor-guardian-role
   apiGroup: rbac.authorization.k8s.io
-
