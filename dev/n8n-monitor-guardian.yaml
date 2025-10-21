@@ -16,7 +16,7 @@ spec:
       serviceAccountName: default
       containers:
         - name: n8n-guardian
-          image: busybox:latest
+          image: bitnami/kubectl:1.30
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -36,7 +36,8 @@ spec:
                   continue
                 fi
 
-                # Check boot webhook
+                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Found monitor pod: $MONITOR_POD" | tee -a $LOG_FILE
+
                 if ! wget -q --spider "$WEBHOOK_BOOT"; then
                   echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $WEBHOOK_BOOT. Restarting monitor..." | tee -a $LOG_FILE
                   kubectl -n ai delete pod "$MONITOR_POD" --force --grace-period=0
@@ -44,7 +45,6 @@ spec:
                   continue
                 fi
 
-                # Check recovered webhook
                 if ! wget -q --spider "$WEBHOOK_RECOVERED"; then
                   echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $WEBHOOK_RECOVERED. Restarting monitor..." | tee -a $LOG_FILE
                   kubectl -n ai delete pod "$MONITOR_POD" --force --grace-period=0
@@ -57,9 +57,9 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 32Mi
+              memory: 64Mi
             limits:
               cpu: 100m
-              memory: 64Mi
+              memory: 128Mi
 
 
