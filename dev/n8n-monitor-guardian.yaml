@@ -13,11 +13,11 @@ spec:
       labels:
         app: n8n-monitor-guardian
     spec:
-      serviceAccountName: default
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: default
       nodeSelector:
-        kubernetes.io/hostname: "master"  # ← change this to your actual master node name
+        kubernetes.io/hostname: "master"  # adjust as needed
       containers:
         - name: n8n-monitor-guardian
           image: alpine/k8s:1.28.3
@@ -30,41 +30,48 @@ spec:
               HEARTBEAT_PORT=9999
               LAST_HEARTBEAT=$(date +%s)
               HOST_NODE=$(hostname)
+              EXPECTED_NODE="master"
 
-              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started on node: $HOST_NODE (host network mode)." | tee -a $LOG_FILE
+              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Guardian started on $HOST_NODE (host network)." | tee -a $LOG_FILE
 
-              EXPECTED_NODE="master"  # <-- change to match node where you want guardian to run
               if [ "$HOST_NODE" != "$EXPECTED_NODE" ]; then
-                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Node mismatch ($HOST_NODE ≠ $EXPECTED_NODE). Guardian will exit." | tee -a $LOG_FILE
+                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Not running on master, exiting." | tee -a $LOG_FILE
                 sleep 3600
-                exit 1
+                exit 0
               fi
 
-              # Background listener for heartbeats
+              # Heartbeat listener (simple HTTP response)
               (
                 while true; do
-                  echo "Listening for heartbeat on port $HEARTBEAT_PORT..." | tee -a $LOG_FILE
-                  nc -lk -p $HEARTBEAT_PORT >/dev/null 2>&1 && LAST_HEARTBEAT=$(date +%s)
+                  echo "Listening on port $HEARTBEAT_PORT..." | tee -a $LOG_FILE
+                  nc -lk -p $HEARTBEAT_PORT -e sh -c '
+                    echo -e "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" ;
+                    date +%s > /tmp/last_beat
+                  '
                 done
               ) &
 
-              # Guardian loop
+              # Guardian logic
               while true; do
+                if [ -f /tmp/last_beat ]; then
+                  LAST_HEARTBEAT=$(cat /tmp/last_beat)
+                fi
+
                 NOW=$(date +%s)
                 DIFF=$((NOW - LAST_HEARTBEAT))
 
                 POD_NAME=$(kubectl -n $NAMESPACE get pod -l app=$MONITOR_DEPLOY -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
                 if [ -z "$POD_NAME" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ No monitor pod found, waiting 10s..." | tee -a $LOG_FILE
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Monitor pod not found." | tee -a $LOG_FILE
                   sleep 10
                   continue
                 fi
 
                 if [ "$DIFF" -gt 60 ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⏱️ No heartbeat for ${DIFF}s, restarting monitor pod ($POD_NAME)." | tee -a $LOG_FILE
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): 🚨 No heartbeat for ${DIFF}s, restarting pod $POD_NAME." | tee -a $LOG_FILE
                   kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
-                  LAST_HEARTBEAT=$(date +%s)
+                  echo $NOW > /tmp/last_beat
                 fi
 
                 sleep 5
@@ -78,7 +85,6 @@ spec:
             limits:
               cpu: 100m
               memory: 128Mi
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
