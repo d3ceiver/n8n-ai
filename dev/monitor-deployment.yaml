@@ -1,3 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,46 +21,65 @@ spec:
       containers:
         - name: n8n-monitor
           image: busybox:latest
-          command: ["/bin/sh", "-c"]
-          args:
+          command:
+            - /bin/sh
+            - -c
             - |
               #!/bin/sh
               WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
               WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
               CHECK_URL="http://192.168.0.59:32000/"
-              STATE="unknown"
+              LOG_FILE="/tmp/n8n-monitor.log"
+              STATE="down"
 
-              echo "$(date): n8n monitor pod started."
+              echo "$(date): n8n monitor pod started." >> "$LOG_FILE"
+              echo "$(date): Waiting for n8n to become available..." >> "$LOG_FILE"
 
-              # --- Wait for n8n to come up ---
+              # --- Wait for n8n to come online ---
               until wget -q --spider "$CHECK_URL"; do
-                echo "$(date): Waiting for n8n to become available..."
-                sleep 10
+                echo "$(date): n8n not reachable yet, retrying in 5s..." >> "$LOG_FILE"
+                sleep 5
               done
 
-              echo "$(date): n8n is now UP → sending boot webhook..."
-              until wget -q --spider --post-data="" "$WEBHOOK_BOOT"; do
-                echo "$(date): Boot webhook not ready yet (retrying in 10s)..."
-                sleep 10
-              done
-              echo "$(date): Boot webhook sent successfully!"
+              echo "$(date): n8n is now UP → attempting boot webhook..." >> "$LOG_FILE"
 
-              # --- Continuous monitoring loop ---
-              STATE="up"
+              # --- Keep retrying boot webhook until successful ---
+              while true; do
+                if wget -q --method=POST --body-data="" "$WEBHOOK_BOOT"; then
+                  echo "$(date): Boot webhook sent successfully!" >> "$LOG_FILE"
+                  STATE="up"
+                  break
+                else
+                  echo "$(date): Boot webhook not ready yet (retrying in 10s)..." >> "$LOG_FILE"
+                  sleep 10
+                fi
+              done
+
+              # --- Continuous monitor loop ---
               while true; do
                 if wget -q --spider "$CHECK_URL"; then
                   if [ "$STATE" = "down" ]; then
-                    echo "$(date): n8n recovered → sending webhook"
-                    wget -q --spider --post-data="" "$WEBHOOK_RECOVERED" && \
-                      echo "$(date): Recovery webhook sent successfully!"
+                    echo "$(date): n8n recovered → sending webhook" >> "$LOG_FILE"
+                    if wget -q --method=POST --body-data="" "$WEBHOOK_RECOVERED"; then
+                      echo "$(date): Recovery webhook sent successfully!" >> "$LOG_FILE"
+                    else
+                      echo "$(date): Recovery webhook failed!" >> "$LOG_FILE"
+                    fi
                     STATE="up"
                   fi
                 else
                   if [ "$STATE" = "up" ]; then
-                    echo "$(date): n8n appears down."
+                    echo "$(date): n8n appears down." >> "$LOG_FILE"
                     STATE="down"
                   fi
                 fi
-                sleep 30
+                sleep 15
               done
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "16Mi"
+            limits:
+              cpu: "50m"
+              memory: "32Mi"
 
