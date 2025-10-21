@@ -13,7 +13,7 @@ spec:
       labels:
         app: n8n-monitor-guardian
     spec:
-      hostNetwork: true  # 👈 use host's network directly (real IP)
+      hostNetwork: true  # 👈 Use host’s IP directly (no cluster routing)
       dnsPolicy: ClusterFirstWithHostNet
       serviceAccountName: default
       containers:
@@ -31,15 +31,22 @@ spec:
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started (host network mode)." | tee -a $LOG_FILE
 
-              # Listen for heartbeat HTTP requests
+              # Last heartbeat timestamp
+              LAST_HEARTBEAT=$(date +%s)
+
+              # Start background listener to receive heartbeats
               (
                 while true; do
-                  echo -e "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK" | nc -l -p $PORT
+                  REQUEST=$(nc -l -p $PORT -v -n)
+                  if [ $? -eq 0 ]; then
+                    LAST_HEARTBEAT=$(date +%s)
+                    echo -e "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ❤️ Heartbeat received." | tee -a $LOG_FILE
+                  fi
                 done
               ) &
 
-              LAST_HEARTBEAT=$(date +%s)
-
+              # Main guardian loop
               while true; do
                 NOW=$(date +%s)
                 DIFF=$((NOW - LAST_HEARTBEAT))
@@ -47,8 +54,10 @@ spec:
                 if [ $DIFF -gt 60 ]; then
                   POD=$(kubectl -n $NAMESPACE get pod -l $MONITOR_LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
                   if [ -n "$POD" ]; then
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for ${DIFF}s, restarting $POD" | tee -a $LOG_FILE
+                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ❌ No heartbeat for ${DIFF}s → restarting monitor pod ($POD)" | tee -a $LOG_FILE
                     kubectl -n $NAMESPACE delete pod "$POD" --grace-period=0 --force
+                  else
+                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Monitor pod not found." | tee -a $LOG_FILE
                   fi
                   LAST_HEARTBEAT=$(date +%s)
                 fi
@@ -88,3 +97,4 @@ roleRef:
   kind: Role
   name: monitor-guardian-role
   apiGroup: rbac.authorization.k8s.io
+
