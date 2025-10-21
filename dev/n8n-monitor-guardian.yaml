@@ -13,38 +13,83 @@ spec:
       labels:
         app: n8n-monitor-guardian
     spec:
-      serviceAccountName: default  # or your custom guardian SA
+      serviceAccountName: default
       hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       containers:
-        - name: guardian
-          image: alpine:latest
+        - name: n8n-monitor-guardian
+          image: bitnami/kubectl:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
-              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started (host network mode).";
+              LOG_FILE="/tmp/n8n-guardian.log"
+              MONITOR_DEPLOY="n8n-monitor"
+              NAMESPACE="ai"
+              PORT=9999
+              TIMEOUT=60
+
+              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started (host network mode)." | tee -a $LOG_FILE
+
+              LAST_HEARTBEAT=$(date +%s)
+
+              # Background listener for heartbeat
               while true; do
-                # Listen for incoming heartbeats
-                nc -l -p 9999 -w 60 >/dev/null && LAST_HEARTBEAT=$(date +%s);
+                if nc -l -p $PORT -w $TIMEOUT >/dev/null 2>&1; then
+                  LAST_HEARTBEAT=$(date +%s)
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): 💓 Heartbeat received." | tee -a $LOG_FILE
+                else
+                  echo "nc: timeout" | tee -a $LOG_FILE
+                fi
 
-                CURRENT_TIME=$(date +%s);
-                TIME_DIFF=$((CURRENT_TIME - LAST_HEARTBEAT));
+                NOW=$(date +%s)
+                ELAPSED=$((NOW - LAST_HEARTBEAT))
 
-                # Get monitor pod name
-                MONITOR_POD=$(kubectl -n ai get pod -l app=n8n-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                POD_NAME=$(kubectl -n $NAMESPACE get pods -l app=$MONITOR_DEPLOY -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
-                if [ -z "$MONITOR_POD" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Monitor pod not found.";
-                elif [ $TIME_DIFF -gt 60 ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ❌ No heartbeat for ${TIME_DIFF}s, restarting monitor pod ($MONITOR_POD).";
-                  kubectl -n ai delete pod "$MONITOR_POD" --force --grace-period=0;
-                  LAST_HEARTBEAT=$(date +%s);
-                fi;
-                sleep 10;
-              done;
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
+                if [ -z "$POD_NAME" ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Monitor pod not found." | tee -a $LOG_FILE
+                  continue
+                fi
+
+                if [ $ELAPSED -ge $TIMEOUT ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ No heartbeat for ${ELAPSED}s — restarting monitor pod ($POD_NAME)." | tee -a $LOG_FILE
+                  kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
+                  LAST_HEARTBEAT=$(date +%s)
+                fi
+
+                sleep 10
+              done
           ports:
             - containerPort: 9999
-              hostPort: 9999
-
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: monitor-guardian-role
+  namespace: ai
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: monitor-guardian-binding
+  namespace: ai
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: ai
+roleRef:
+  kind: Role
+  name: monitor-guardian-role
+  apiGroup: rbac.authorization.k8s.io
