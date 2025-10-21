@@ -1,34 +1,3 @@
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: n8n-guardian
-  namespace: ai
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: n8n-guardian-role
-  namespace: ai
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: n8n-guardian-binding
-  namespace: ai
-subjects:
-  - kind: ServiceAccount
-    name: n8n-guardian
-    namespace: ai
-roleRef:
-  kind: Role
-  name: n8n-guardian-role
-  apiGroup: rbac.authorization.k8s.io
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -44,75 +13,53 @@ spec:
       labels:
         app: n8n-guardian
     spec:
-      serviceAccountName: n8n-guardian
+      serviceAccountName: default
       containers:
         - name: n8n-guardian
-          image: curlimages/curl:latest
+          image: busybox:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
               LOG_FILE="/tmp/n8n-guardian.log"
               MONITOR_LABEL="app=n8n-monitor"
-              NAMESPACE="ai"
-              HEARTBEAT_FILE="/tmp/last_heartbeat"
-              WEBHOOK1="http://192.168.0.59:32000/webhook/pi-boot"
-              WEBHOOK2="http://192.168.0.59:32000/webhook/n8n-recovered"
+              WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
+              WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Guardian started." | tee -a $LOG_FILE
 
-              # Background listener for heartbeat
-              (
-                while true; do
-                  nc -l -p 8080 > /dev/null 2>&1 && \
-                  date +%s > "$HEARTBEAT_FILE" && \
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Heartbeat received." | tee -a $LOG_FILE
-                done
-              ) &
-
               while true; do
-                POD_NAME=$(kubectl get pods -n "$NAMESPACE" -l "$MONITOR_LABEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                MONITOR_POD=$(kubectl -n ai get pods -l $MONITOR_LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
-                if [ -z "$POD_NAME" ]; then
+                if [ -z "$MONITOR_POD" ]; then
                   echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 15s..." | tee -a $LOG_FILE
                   sleep 15
                   continue
                 fi
 
-                # Check first webhook
-                for WEBHOOK in "$WEBHOOK1" "$WEBHOOK2"; do
-                  STATUS=$(curl -o /dev/null -s -w "%{http_code}" -X POST "$WEBHOOK")
-                  if [ "$STATUS" != "200" ]; then
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $WEBHOOK (HTTP $STATUS). Restarting monitor pod $POD_NAME..." | tee -a $LOG_FILE
-                    kubectl delete pod "$POD_NAME" -n "$NAMESPACE" --force --grace-period=0
-                    sleep 30
-                    break
-                  fi
-                done
+                # Check boot webhook
+                if ! wget -q --spider "$WEBHOOK_BOOT"; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $WEBHOOK_BOOT. Restarting monitor..." | tee -a $LOG_FILE
+                  kubectl -n ai delete pod "$MONITOR_POD" --force --grace-period=0
+                  sleep 20
+                  continue
+                fi
 
-                # Check last heartbeat
-                if [ -f "$HEARTBEAT_FILE" ]; then
-                  LAST=$(cat "$HEARTBEAT_FILE")
-                  NOW=$(date +%s)
-                  AGE=$((NOW - LAST))
-                  if [ "$AGE" -gt 120 ]; then
-                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for $AGE seconds. Restarting monitor pod $POD_NAME..." | tee -a $LOG_FILE
-                    kubectl delete pod "$POD_NAME" -n "$NAMESPACE" --force --grace-period=0
-                    sleep 30
-                  fi
-                else
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat file found yet." | tee -a $LOG_FILE
+                # Check recovered webhook
+                if ! wget -q --spider "$WEBHOOK_RECOVERED"; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $WEBHOOK_RECOVERED. Restarting monitor..." | tee -a $LOG_FILE
+                  kubectl -n ai delete pod "$MONITOR_POD" --force --grace-period=0
+                  sleep 20
+                  continue
                 fi
 
                 sleep 30
               done
-          ports:
-            - containerPort: 8080
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 32Mi
             limits:
               cpu: 100m
-              memory: 128Mi
+              memory: 64Mi
 
 
