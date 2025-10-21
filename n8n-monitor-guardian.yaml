@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n-monitor-guardian
+  namespace: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: n8n-monitor-guardian
+  template:
+    metadata:
+      labels:
+        app: n8n-monitor-guardian
+    spec:
+      serviceAccountName: default  # needs delete permission on pods in namespace
+      containers:
+        - name: n8n-monitor-guardian
+          image: bitnami/kubectl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              LOG_FILE="/tmp/n8n-guardian.log"
+              MONITOR_DEPLOY="n8n-monitor"
+              NAMESPACE="ai"
+              WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
+              WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
+
+              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Guardian started." | tee -a $LOG_FILE
+
+              while true; do
+                # 1️⃣ Check if n8n-monitor pod exists
+                POD_NAME=$(kubectl -n $NAMESPACE get pod -l app=$MONITOR_DEPLOY -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                if [ -z "$POD_NAME" ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 15s..." | tee -a $LOG_FILE
+                  sleep 15
+                  continue
+                fi
+
+                # 2️⃣ Check pod status
+                POD_STATUS=$(kubectl -n $NAMESPACE get pod "$POD_NAME" -o jsonpath='{.status.phase}' 2>/dev/null)
+                if [ "$POD_STATUS" != "Running" ]; then
+                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Pod $POD_NAME not running (status: $POD_STATUS)" | tee -a $LOG_FILE
+                  kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
+                  sleep 20
+                  continue
+                fi
+
+                # 3️⃣ Check webhook availability
+                for URL in "$WEBHOOK_BOOT" "$WEBHOOK_RECOVERED"; do
+                  STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL")
+                  if [ "$STATUS" -ne 200 ]; then
+                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Webhook check failed for $URL (HTTP $STATUS). Restarting monitor..." | tee -a $LOG_FILE
+                    kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
+                    sleep 30
+                    continue 2
+                  fi
+                done
+
+                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Monitor and webhooks healthy." | tee -a $LOG_FILE
+                sleep 60
+              done
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
