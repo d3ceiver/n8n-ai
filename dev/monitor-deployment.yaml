@@ -11,13 +11,12 @@ metadata:
 data:
   monitor.sh: |
     #!/bin/sh
-    LOG_FILE="/data/n8n-status/n8n-monitor.log"
+    LOG_FILE="/tmp/n8n-monitor.log"
     WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
     WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
     CHECK_URL="http://192.168.0.59:32000/"
-    STATE_FILE="/data/n8n-status/state"
+    STATE_FILE="/tmp/n8n-status"
 
-    mkdir -p "$(dirname "$STATE_FILE")"
     echo "$(date): n8n-monitor starting..." >> "$LOG_FILE"
 
     # --- Boot event ---
@@ -28,33 +27,22 @@ data:
     fi
 
     # --- Continuous monitor ---
+    LAST_STATE="up"
     while true; do
       if curl -s --head --request GET "$CHECK_URL" | grep "200 OK" > /dev/null; then
-        if grep -q "down" "$STATE_FILE"; then
-          echo "up" > "$STATE_FILE"
+        if [ "$LAST_STATE" = "down" ]; then
           echo "$(date): n8n recovered → sending webhook" >> "$LOG_FILE"
           curl -s -X POST "$WEBHOOK_RECOVERED" -o /dev/null
+          LAST_STATE="up"
         fi
       else
-        if grep -q "up" "$STATE_FILE"; then
-          echo "down" > "$STATE_FILE"
+        if [ "$LAST_STATE" = "up" ]; then
           echo "$(date): n8n appears down" >> "$LOG_FILE"
+          LAST_STATE="down"
         fi
       fi
       sleep 30
     done
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: n8n-monitor-pvc
-  namespace: ai
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 20Mi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -78,13 +66,8 @@ spec:
           volumeMounts:
             - name: script
               mountPath: /scripts
-            - name: n8n-state
-              mountPath: /data/n8n-status
       restartPolicy: Always
       volumes:
         - name: script
           configMap:
             name: n8n-monitor-script
-        - name: n8n-state
-          persistentVolumeClaim:
-            claimName: n8n-monitor-pvc
