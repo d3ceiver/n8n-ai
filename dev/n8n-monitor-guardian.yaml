@@ -16,6 +16,8 @@ spec:
       serviceAccountName: default
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        kubernetes.io/hostname: "master"  # ← change this to your actual master node name
       containers:
         - name: n8n-monitor-guardian
           image: alpine/k8s:1.28.3
@@ -27,8 +29,16 @@ spec:
               NAMESPACE="ai"
               HEARTBEAT_PORT=9999
               LAST_HEARTBEAT=$(date +%s)
+              HOST_NODE=$(hostname)
 
-              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started (host network mode)." | tee -a $LOG_FILE
+              echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started on node: $HOST_NODE (host network mode)." | tee -a $LOG_FILE
+
+              EXPECTED_NODE="master"  # <-- change to match node where you want guardian to run
+              if [ "$HOST_NODE" != "$EXPECTED_NODE" ]; then
+                echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): ⚠️ Node mismatch ($HOST_NODE ≠ $EXPECTED_NODE). Guardian will exit." | tee -a $LOG_FILE
+                sleep 3600
+                exit 1
+              fi
 
               # Background listener for heartbeats
               (
@@ -93,4 +103,5 @@ roleRef:
   kind: Role
   name: monitor-guardian-role
   apiGroup: rbac.authorization.k8s.io
+
 
