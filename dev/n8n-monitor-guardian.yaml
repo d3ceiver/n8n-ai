@@ -16,46 +16,45 @@ spec:
       serviceAccountName: default
       containers:
         - name: n8n-monitor-guardian
-          image: alpine/k8s:1.28.3
+          image: alpine:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
-              LOG_FILE="/tmp/n8n-guardian.log"
-              MONITOR_DEPLOY="n8n-monitor"
+              apk add --no-cache curl busybox-extras > /dev/null
+
+              LOG_FILE="/tmp/guardian.log"
               NAMESPACE="ai"
-              HEARTBEAT_PORT=9999
-              LAST_HEARTBEAT=$(date +%s)
+              MONITOR_LABEL="app=n8n-monitor"
+              PORT=9999
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): Passive Guardian started." | tee -a $LOG_FILE
 
-              # Background listener for heartbeats
+              # Background HTTP listener for heartbeats
               (
                 while true; do
-                  echo "Listening for heartbeat on port $HEARTBEAT_PORT..." | tee -a $LOG_FILE
-                  nc -lk -p $HEARTBEAT_PORT >/dev/null 2>&1 && LAST_HEARTBEAT=$(date +%s)
+                  { 
+                    echo -e "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK" 
+                  } | nc -lk -p $PORT -q 1
                 done
               ) &
 
-              # Guardian loop
+              LAST_HEARTBEAT=$(date +%s)
+
               while true; do
                 NOW=$(date +%s)
                 DIFF=$((NOW - LAST_HEARTBEAT))
 
-                POD_NAME=$(kubectl -n $NAMESPACE get pod -l app=$MONITOR_DEPLOY -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-
-                if [ -z "$POD_NAME" ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No monitor pod found, waiting 10s..." | tee -a $LOG_FILE
-                  sleep 10
-                  continue
-                fi
-
-                if [ "$DIFF" -gt 60 ]; then
-                  echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for ${DIFF}s, restarting monitor pod ($POD_NAME)." | tee -a $LOG_FILE
-                  kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
+                # Check heartbeat freshness
+                if [ $DIFF -gt 60 ]; then
+                  POD=$(kubectl -n $NAMESPACE get pod -l $MONITOR_LABEL -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                  if [ -n "$POD" ]; then
+                    echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): No heartbeat for ${DIFF}s, restarting pod $POD." | tee -a $LOG_FILE
+                    kubectl -n $NAMESPACE delete pod "$POD" --grace-period=0 --force
+                  fi
                   LAST_HEARTBEAT=$(date +%s)
                 fi
 
-                sleep 5
+                sleep 10
               done
           ports:
             - containerPort: 9999
@@ -76,11 +75,9 @@ spec:
   selector:
     app: n8n-monitor-guardian
   ports:
-    - name: heartbeat
-      protocol: TCP
-      port: 9999
+    - port: 9999
       targetPort: 9999
-  type: ClusterIP
+      protocol: TCP
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -105,6 +102,3 @@ roleRef:
   kind: Role
   name: monitor-guardian-role
   apiGroup: rbac.authorization.k8s.io
-
-
-
