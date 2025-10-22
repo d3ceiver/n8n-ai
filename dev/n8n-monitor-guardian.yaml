@@ -68,7 +68,7 @@ spec:
                   continue
                 fi
 
-                if [ "$DIFF" -gt 60 ]; then
+                if [ "$DIFF" -gt 960 ]; then
                   echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): 🚨 No heartbeat for ${DIFF}s, restarting pod $POD_NAME." | tee -a $LOG_FILE
                   kubectl -n $NAMESPACE delete pod "$POD_NAME" --grace-period=0 --force
                   echo $NOW > /tmp/last_beat
