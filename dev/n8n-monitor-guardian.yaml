@@ -40,18 +40,21 @@ spec:
                 exit 0
               fi
 
-              # Heartbeat listener (simple HTTP response)
+              # Heartbeat listener (logs source IP + responds with HTTP 200)
               (
                 while true; do
                   echo "Listening on port $HEARTBEAT_PORT..." | tee -a $LOG_FILE
                   nc -lk -p $HEARTBEAT_PORT -e sh -c '
-                    echo -e "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" ;
+                    SRC_IP=$(echo $SOCAT_PEERADDR)
+                    TIMESTAMP=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
+                    echo "$TIMESTAMP: ❤️ Heartbeat received from ${SRC_IP:-unknown}" | tee -a /tmp/n8n-guardian.log
+                    echo -e "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
                     date +%s > /tmp/last_beat
                   '
                 done
               ) &
 
-              # Guardian logic
+              # Guardian logic loop
               while true; do
                 if [ -f /tmp/last_beat ]; then
                   LAST_HEARTBEAT=$(cat /tmp/last_beat)
