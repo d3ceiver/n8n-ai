@@ -1,16 +1,1 @@
-apiVersion: traefik.containo.us/v1alpha1
-kind: IngressRoute
-metadata:
-  name: n8n
-  namespace: ai
-spec:
-  entryPoints:
-    - websecure
-  routes:
-    - match: 192.168.0.58
-      kind: Rule
-      services:
-        - name: n8n
-          port: 5678
-  tls:
-    certResolver: letsencrypt
+
