@@ -7,7 +7,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`n8n.example.com`)
+    - match: 192.168.0.58
       kind: Rule
       services:
         - name: n8n
