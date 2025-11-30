@@ -20,9 +20,9 @@ spec:
           args:
             - |
               LOG_FILE="/tmp/n8n-monitor.log"
-              WEBHOOK_BOOT="http://192.168.0.59:32000/webhook/pi-boot"
-              WEBHOOK_RECOVERED="http://192.168.0.59:32000/webhook/n8n-recovered"
-              CHECK_URL="http://192.168.0.59:32000/"
+              WEBHOOK_BOOT="http://192.168.0.58:32000/webhook/pi-boot"
+              WEBHOOK_RECOVERED="http://192.168.0.58:32000/webhook/n8n-recovered"
+              CHECK_URL="http://192.168.0.58:32000/"
 
               echo "$(date -u '+%Y-%m-%d %H:%M:%S UTC'): n8n monitor pod started." | tee -a $LOG_FILE
 
